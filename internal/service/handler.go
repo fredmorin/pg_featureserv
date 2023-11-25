@@ -16,7 +16,9 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"strings"
 
@@ -262,32 +264,51 @@ func handleCollectionItems(w http.ResponseWriter, r *http.Request) *appError {
 
 	//--- extract request parameters
 	name := getRequestVar(routeVarID, r)
-	reqParam, err := parseRequestParams(r)
-	if err != nil {
-		return appErrorMsg(err, err.Error(), http.StatusBadRequest)
-	}
-
-	tbl, err1 := catalogInstance.TableByName(name)
-	if err1 != nil {
-		return appErrorInternalFmt(err1, api.ErrMsgCollectionAccess, name)
-	}
-	if tbl == nil {
-		return appErrorNotFoundFmt(err1, api.ErrMsgCollectionNotFound, name)
-	}
-	param, err := createQueryParams(&reqParam, tbl.Columns, tbl.Srid)
-	if err != nil {
-		return appErrorBadRequest(err, err.Error())
-	}
-	param.Filter = parseFilter(reqParam.Values, tbl.DbTypes)
-
 	ctx := r.Context()
-	switch format {
-	case api.FormatJSON:
-		return writeItemsJSON(ctx, w, name, param, urlBase)
-	case api.FormatHTML:
-		return writeItemsHTML(w, tbl, name, query, urlBase)
+	switch r.Method {
+	case http.MethodGet:
+		reqParam, err := parseRequestParams(r)
+		if err != nil {
+			return appErrorMsg(err, err.Error(), http.StatusBadRequest)
+		}
+
+		tbl, err1 := catalogInstance.TableByName(name)
+		if err1 != nil {
+			return appErrorInternalFmt(err1, api.ErrMsgCollectionAccess, name)
+		}
+		if tbl == nil {
+			return appErrorNotFoundFmt(err1, api.ErrMsgCollectionNotFound, name)
+		}
+		param, err := createQueryParams(&reqParam, tbl.Columns, tbl.Srid)
+		if err != nil {
+			return appErrorBadRequest(err, err.Error())
+		}
+		param.Filter = parseFilter(reqParam.Values, tbl.DbTypes)
+
+		switch format {
+		case api.FormatJSON:
+			return writeItemsJSON(ctx, w, name, param, urlBase)
+		case api.FormatHTML:
+			return writeItemsHTML(w, tbl, name, query, urlBase)
+		}
+		return nil
+	case http.MethodPost:
+		body, err := ioutil.ReadAll(r.Body)
+		if err != nil {
+			return appErrorInternalFmt(err, api.ErrMsgInvalidQuery)
+		}
+		print(body)
+		var feature data.Feature
+		err = json.Unmarshal([]byte(body), &feature)
+		if err != nil {
+			return appErrorInternalFmt(err, api.ErrMsgInvalidQuery)
+		}
+		catalogInstance.CreateTableFeature(ctx, name, feature)
+		return nil
+
+	default:
+		return appErrorInternalFmt(fmt.Errorf("Method not allowed: %s", r.Method), "")
 	}
-	return nil
 }
 
 func writeItemsHTML(w http.ResponseWriter, tbl *data.Table, name string, query string, urlBase string) *appError {
@@ -357,20 +378,40 @@ func handleItem(w http.ResponseWriter, r *http.Request) *appError {
 	if tbl == nil {
 		return appErrorNotFoundFmt(err1, api.ErrMsgCollectionNotFound, name)
 	}
-	param, errQuery := createQueryParams(&reqParam, tbl.Columns, tbl.Srid)
 
-	if errQuery == nil {
-		ctx := r.Context()
-		switch format {
-		case api.FormatJSON:
-			return writeItemJSON(ctx, w, name, fid, param, urlBase)
-		case api.FormatHTML:
-			return writeItemHTML(w, tbl, name, fid, query, urlBase)
-		default:
-			return nil
+	ctx := r.Context()
+	param, errQuery := createQueryParams(&reqParam, tbl.Columns, tbl.Srid)
+	switch r.Method {
+	case http.MethodGet:
+		if errQuery == nil {
+			switch format {
+			case api.FormatJSON:
+				return writeItemJSON(ctx, w, name, fid, param, urlBase)
+			case api.FormatHTML:
+				return writeItemHTML(w, tbl, name, fid, query, urlBase)
+			default:
+				return nil
+			}
+		} else {
+			return appErrorInternalFmt(errQuery, api.ErrMsgInvalidQuery)
 		}
-	} else {
-		return appErrorInternalFmt(errQuery, api.ErrMsgInvalidQuery)
+	case http.MethodPut:
+		body, err := ioutil.ReadAll(r.Body)
+		if err != nil {
+			return appErrorInternalFmt(err, api.ErrMsgInvalidQuery)
+		}
+		print(body)
+		var feature data.Feature
+		err = json.Unmarshal([]byte(body), &feature)
+		if err != nil {
+			return appErrorInternalFmt(err, api.ErrMsgInvalidQuery)
+		}
+		catalogInstance.ReplaceTableFeature(ctx, name, fid, feature)
+		return nil
+	case http.MethodDelete:
+		return appErrorInternalFmt(fmt.Errorf("Method not implemented: %s", r.Method), "")
+	default:
+		return appErrorInternalFmt(fmt.Errorf("Method not allowed: %s", r.Method), "")
 	}
 }
 

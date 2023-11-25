@@ -1,6 +1,7 @@
 package data
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -24,24 +25,25 @@ import (
 const forceTextTSVECTOR = "tsvector"
 
 const sqlTables = `SELECT
-	Format('%s.%s', n.nspname, c.relname) AS id,
-	n.nspname AS schema,
-	c.relname AS table,
-	coalesce(d.description, '') AS description,
-	a.attname AS geometry_column,
-	postgis_typmod_srid(a.atttypmod) AS srid,
-	postgis_typmod_type(a.atttypmod) AS geometry_type,
-	coalesce(ia.attname, '') AS id_column,
-	(
-		SELECT array_agg(ARRAY[sa.attname, st.typname, coalesce(da.description,''), sa.attnum::text]::text[] ORDER BY sa.attnum)
-		FROM pg_attribute sa
-		JOIN pg_type st ON sa.atttypid = st.oid
-		LEFT JOIN pg_description da ON (c.oid = da.objoid and sa.attnum = da.objsubid)
-		WHERE sa.attrelid = c.oid
-		AND sa.attnum > 0
-		AND NOT sa.attisdropped
-		AND st.typname NOT IN ('geometry', 'geography')
-	) AS props
+Format('%s.%s', n.nspname, c.relname) AS id,
+n.nspname AS schema,
+c.relname AS table,
+coalesce(d.description, '') AS description,
+a.attname AS geometry_column,
+postgis_typmod_srid(a.atttypmod) AS srid,
+postgis_typmod_type(a.atttypmod) AS geometry_type,
+coalesce(ia.attname, '') AS id_column,
+(
+	SELECT array_agg(ARRAY[sa.attname, st.typname, coalesce(da.description,''), sa.attnum::text,pg_get_expr(d.adbin, d.adrelid)]::text[] ORDER BY sa.attnum)
+	FROM pg_attribute sa
+	JOIN pg_type st ON sa.atttypid = st.oid
+	LEFT JOIN pg_description da ON (c.oid = da.objoid and sa.attnum = da.objsubid)
+	LEFT JOIN pg_attrdef d ON (sa.attrelid, sa.attnum) = (d.adrelid, d.adnum)
+	WHERE sa.attrelid = c.oid
+	AND sa.attnum > 0
+	AND NOT sa.attisdropped
+	AND st.typname NOT IN ('geometry', 'geography')
+) AS props
 FROM pg_class c
 JOIN pg_namespace n ON (c.relnamespace = n.oid)
 JOIN pg_attribute a ON (a.attrelid = c.oid)
@@ -189,6 +191,73 @@ func sqlFeature(tbl *Table, param *QueryParam) string {
 	propCols := sqlColList(param.Columns, tbl.DbTypes, true)
 	sql := fmt.Sprintf(sqlFmtFeature, geomCol, propCols, tbl.Schema, tbl.Table, tbl.IDColumn)
 	return sql
+}
+
+func sqlCreateFeature(tbl *Table, feature Feature) (string, []interface{}, error) {
+
+	var columnNames = []string{}
+	var columnIndex = []string{}
+	var i = 2
+
+	for index := range tbl.Columns {
+		var column = tbl.Columns[index]
+		if _, ok := feature.Properties[column]; ok {
+			columnNames = append(columnNames, column)
+			columnIndex = append(columnIndex, fmt.Sprintf("$%v", i))
+			i++
+		}
+	}
+	var columnNamesStr = strings.Join(columnNames, ",")
+	var columnIndexStr = strings.Join(columnIndex, ",")
+
+	var sql string
+	if len(columnNames) > 0 {
+		sql = fmt.Sprintf("INSERT INTO \"%s\".\"%s\" (%s, %s) VALUES (%s,ST_Transform(ST_GeomFromGeoJSON($1),%v));", tbl.Schema, tbl.Table, columnNamesStr, tbl.GeometryColumn, columnIndexStr, tbl.Srid)
+	} else {
+		sql = fmt.Sprintf("INSERT INTO \"%s\".\"%s\" (%s) VALUES (ST_Transform(ST_GeomFromGeoJSON($1),%v));", tbl.Schema, tbl.Table, tbl.GeometryColumn, tbl.Srid)
+	}
+	argValues := make([]interface{}, len(columnNames)+1) // geom, properties
+	var err error
+	argValues[0], err = json.Marshal(feature.Geometry)
+	i = 1
+	for _, columnName := range columnNames {
+		argValues[i] = feature.Properties[columnName]
+		i++
+	}
+	if err != nil {
+		return "", nil, err
+	}
+	return sql, argValues, nil
+}
+
+func sqlReplaceFeature(tbl *Table, id string, feature Feature) (string, []interface{}, error) {
+	sql := fmt.Sprintf("UPDATE \"%s\".\"%s\" SET %s=ST_Transform(ST_GeomFromGeoJSON($1),%v)", tbl.Schema, tbl.Table, tbl.GeometryColumn, tbl.Srid)
+	for index, column := range tbl.Columns {
+		sql += fmt.Sprintf(" ,%s=$%v", column, index+2)
+	}
+	sql += fmt.Sprintf(" WHERE \"%v\" = $%v", tbl.IDColumn, len(tbl.Columns)+2)
+	argValues := make([]interface{}, len(tbl.Columns)+2) // geom, properties, id
+	var err error
+	argValues[0], err = json.Marshal(feature.Geometry)
+	if err != nil {
+		return "", nil, err
+	}
+	for index, column := range tbl.Columns {
+		if column == tbl.IDColumn {
+			argValues[index+1] = id // Set to url specified id.
+			continue
+		}
+		if val, ok := feature.Properties[column]; ok {
+			if tbl.DbTypes[column] == "int4" {
+				argValues[index+1] = int(val.(float64))
+			} else {
+				argValues[index+1] = val
+			}
+		}
+	}
+	argValues[len(tbl.Columns)+1] = id
+
+	return sql, argValues, nil
 }
 
 func sqlCqlFilter(sql string) string {
