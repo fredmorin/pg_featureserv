@@ -23,27 +23,25 @@ import (
 */
 
 const forceTextTSVECTOR = "tsvector"
-
 const sqlTables = `SELECT
-Format('%s.%s', n.nspname, c.relname) AS id,
-n.nspname AS schema,
-c.relname AS table,
-coalesce(d.description, '') AS description,
-a.attname AS geometry_column,
-postgis_typmod_srid(a.atttypmod) AS srid,
-postgis_typmod_type(a.atttypmod) AS geometry_type,
-coalesce(ia.attname, '') AS id_column,
-(
-	SELECT array_agg(ARRAY[sa.attname, st.typname, coalesce(da.description,''), sa.attnum::text,pg_get_expr(d.adbin, d.adrelid)]::text[] ORDER BY sa.attnum)
-	FROM pg_attribute sa
-	JOIN pg_type st ON sa.atttypid = st.oid
-	LEFT JOIN pg_description da ON (c.oid = da.objoid and sa.attnum = da.objsubid)
-	LEFT JOIN pg_attrdef d ON (sa.attrelid, sa.attnum) = (d.adrelid, d.adnum)
-	WHERE sa.attrelid = c.oid
-	AND sa.attnum > 0
-	AND NOT sa.attisdropped
-	AND st.typname NOT IN ('geometry', 'geography')
-) AS props
+	Format('%s.%s', n.nspname, c.relname) AS id,
+	n.nspname AS schema,
+	c.relname AS table,
+	coalesce(d.description, '') AS description,
+	a.attname AS geometry_column,
+	postgis_typmod_srid(a.atttypmod) AS srid,
+	postgis_typmod_type(a.atttypmod) AS geometry_type,
+	coalesce(ia.attname, '') AS id_column,
+	(
+		SELECT array_agg(ARRAY[sa.attname, st.typname, coalesce(da.description,''), sa.attnum::text]::text[] ORDER BY sa.attnum)
+		FROM pg_attribute sa
+		JOIN pg_type st ON sa.atttypid = st.oid
+		LEFT JOIN pg_description da ON (c.oid = da.objoid and sa.attnum = da.objsubid)
+		WHERE sa.attrelid = c.oid
+		AND sa.attnum > 0
+		AND NOT sa.attisdropped
+		AND st.typname NOT IN ('geometry', 'geography')
+	) AS props
 FROM pg_class c
 JOIN pg_namespace n ON (c.relnamespace = n.oid)
 JOIN pg_attribute a ON (a.attrelid = c.oid)
@@ -59,6 +57,7 @@ AND has_table_privilege(c.oid, 'select')
 AND postgis_typmod_srid(a.atttypmod) > 0
 ORDER BY id
 `
+
 const sqlFunctionsTemplate = `WITH
 proargs AS (
 	SELECT p.oid,
