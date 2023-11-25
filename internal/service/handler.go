@@ -410,7 +410,8 @@ func handleItem(w http.ResponseWriter, r *http.Request) *appError {
 		catalogInstance.ReplaceTableFeature(ctx, name, fid, feature)
 		return nil
 	case http.MethodDelete:
-		return appErrorInternalFmt(fmt.Errorf("Method not implemented: %s", r.Method), "")
+		catalogInstance.DeleteTableFeature(ctx, name, fid)
+		return nil
 	default:
 		return appErrorInternalFmt(fmt.Errorf("Method not allowed: %s", r.Method), "")
 	}

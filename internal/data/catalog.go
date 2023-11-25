@@ -53,6 +53,9 @@ type Catalog interface {
 	// CreateTableFeature creates a feature
 	CreateTableFeature(ctx context.Context, name string, feature Feature) error
 
+	// DeleteTableFeature deletes a feature
+	DeleteTableFeature(ctx context.Context, name string, id string) error
+
 	Functions() ([]*Function, error)
 
 	// FunctionByName returns the function with given name.

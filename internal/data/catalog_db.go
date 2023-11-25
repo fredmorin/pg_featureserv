@@ -240,7 +240,7 @@ func (cat *catalogDB) CreateTableFeature(ctx context.Context, name string, featu
 		return err
 	}
 	sql, argValues, err := sqlCreateFeature(tbl, feature)
-	log.Debug("Feature query: " + sql)
+	log.Debug("Create feature query: " + sql)
 	result, err := cat.dbconn.Exec(ctx, sql, argValues...)
 	if err != nil {
 		return err
@@ -258,7 +258,25 @@ func (cat *catalogDB) ReplaceTableFeature(ctx context.Context, name string, id s
 		return err
 	}
 	sql, argValues, err := sqlReplaceFeature(tbl, id, feature)
-	log.Debug("Feature query: " + sql)
+	log.Debug("Replace feature query: " + sql)
+	result, err := cat.dbconn.Exec(ctx, sql, argValues...)
+	if err != nil {
+		return err
+	}
+	rows := result.RowsAffected()
+	if rows != 1 {
+		return fmt.Errorf("expected to affect 1 row, affected %d", rows)
+	}
+	return nil
+}
+
+func (cat *catalogDB) DeleteTableFeature(ctx context.Context, name string, id string) error {
+	tbl, err := cat.TableByName(name)
+	if err != nil {
+		return err
+	}
+	sql, argValues := sqlDeleteFeature(tbl, id)
+	log.Debug("Delete feature query: " + sql)
 	result, err := cat.dbconn.Exec(ctx, sql, argValues...)
 	if err != nil {
 		return err

@@ -269,6 +269,13 @@ func sqlReplaceFeature(tbl *Table, id string, feature Feature) (string, []interf
 	return sql, argValues, nil
 }
 
+func sqlDeleteFeature(tbl *Table, id string) (string, []interface{}) {
+	sql := fmt.Sprintf("DELETE FROM \"%s\".\"%s\" WHERE \"%v\" = $1;", tbl.Schema, tbl.Table, tbl.IDColumn)
+	argValues := make([]interface{}, 1)
+	argValues[0] = id
+	return sql, argValues
+}
+
 func sqlCqlFilter(sql string) string {
 	//log.Debug("SQL = " + sql)
 	if len(sql) == 0 {
