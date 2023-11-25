@@ -100,6 +100,7 @@ It includes [*OGC API - Features*](http://docs.opengeospatial.org/is/17-069r3/17
 ### Transactions
 - [X] Support POST, PUT, DELETE on tables with primary key
 - [ ] Support PATCH...  TBD
+- [ ] Support Optimistic locking
 
 ## User Interface (HTML)
 - [x] `/home.html` landing page
