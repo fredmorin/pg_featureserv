@@ -304,6 +304,7 @@ func handleCollectionItems(w http.ResponseWriter, r *http.Request) *appError {
 			return appErrorInternalFmt(err, api.ErrMsgInvalidQuery)
 		}
 		catalogInstance.CreateTableFeature(ctx, name, feature)
+		w.WriteHeader(http.StatusCreated)
 		return nil
 
 	default:

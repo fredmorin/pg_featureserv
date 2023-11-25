@@ -193,69 +193,78 @@ func sqlFeature(tbl *Table, param *QueryParam) string {
 	return sql
 }
 
-func sqlCreateFeature(tbl *Table, feature Feature) (string, []interface{}, error) {
-
-	var columnNames = []string{}
-	var columnIndex = []string{}
+func getColumnValues(tbl *Table, feature Feature, includeOnlySetProperties bool) ([]string, []string, []interface{}) {
+	var columnNames, columnIndex []string
+	var columnValues []interface{}
 	var i = 2
 
-	for index := range tbl.Columns {
-		var column = tbl.Columns[index]
-		if _, ok := feature.Properties[column]; ok {
+	for _, column := range tbl.Columns {
+		val, ok := feature.Properties[column]
+
+		if !includeOnlySetProperties || (ok && val != nil) {
 			columnNames = append(columnNames, column)
 			columnIndex = append(columnIndex, fmt.Sprintf("$%v", i))
+			columnValues = append(columnValues, val)
 			i++
 		}
 	}
-	var columnNamesStr = strings.Join(columnNames, ",")
-	var columnIndexStr = strings.Join(columnIndex, ",")
 
-	var sql string
-	if len(columnNames) > 0 {
-		sql = fmt.Sprintf("INSERT INTO \"%s\".\"%s\" (%s, %s) VALUES (%s,ST_Transform(ST_GeomFromGeoJSON($1),%v));", tbl.Schema, tbl.Table, columnNamesStr, tbl.GeometryColumn, columnIndexStr, tbl.Srid)
-	} else {
-		sql = fmt.Sprintf("INSERT INTO \"%s\".\"%s\" (%s) VALUES (ST_Transform(ST_GeomFromGeoJSON($1),%v));", tbl.Schema, tbl.Table, tbl.GeometryColumn, tbl.Srid)
+	return columnNames, columnIndex, columnValues
+}
+
+func buildGeometrySQL(tbl *Table) string {
+	if len(tbl.Columns) > 0 {
+		return fmt.Sprintf("ST_Transform(ST_GeomFromGeoJSON($1),%v)", tbl.Srid)
 	}
-	argValues := make([]interface{}, len(columnNames)+1) // geom, properties
+	return fmt.Sprintf("ST_Transform(ST_GeomFromGeoJSON($1),%v)", tbl.Srid)
+}
+
+func buildUpdateSetClause(columnNames []string, columnIndex []string) string {
+	var setClause string
+	for index := 0; index < len(columnNames); index++ {
+		setClause += fmt.Sprintf(", %s=%s", columnNames[index], columnIndex[index])
+	}
+	return setClause
+}
+
+func sqlCreateFeature(tbl *Table, feature Feature) (string, []interface{}, error) {
+	columnNames, columnIndex, columnValues := getColumnValues(tbl, feature, true)
+
+	columnNamesStr := strings.Join(columnNames, ",")
+	columnIndexStr := strings.Join(columnIndex, ",")
+	geomSQL := buildGeometrySQL(tbl)
+
+	sql := fmt.Sprintf("INSERT INTO \"%s\".\"%s\" (%s, %s) VALUES (%s, %v);", tbl.Schema, tbl.Table, columnNamesStr, tbl.GeometryColumn, columnIndexStr, geomSQL)
+
 	var err error
+	argValues := make([]interface{}, len(columnValues)+1)
 	argValues[0], err = json.Marshal(feature.Geometry)
-	i = 1
-	for _, columnName := range columnNames {
-		argValues[i] = feature.Properties[columnName]
-		i++
-	}
 	if err != nil {
 		return "", nil, err
 	}
+
+	copy(argValues[1:], columnValues)
+
 	return sql, argValues, nil
 }
 
 func sqlReplaceFeature(tbl *Table, id string, feature Feature) (string, []interface{}, error) {
-	sql := fmt.Sprintf("UPDATE \"%s\".\"%s\" SET %s=ST_Transform(ST_GeomFromGeoJSON($1),%v)", tbl.Schema, tbl.Table, tbl.GeometryColumn, tbl.Srid)
-	for index, column := range tbl.Columns {
-		sql += fmt.Sprintf(" ,%s=$%v", column, index+2)
-	}
-	sql += fmt.Sprintf(" WHERE \"%v\" = $%v", tbl.IDColumn, len(tbl.Columns)+2)
-	argValues := make([]interface{}, len(tbl.Columns)+2) // geom, properties, id
+	columnNames, columnIndex, columnValues := getColumnValues(tbl, feature, false)
+
+	geomSQL := buildGeometrySQL(tbl)
+	setClause := buildUpdateSetClause(columnNames, columnIndex)
+
+	sql := fmt.Sprintf("UPDATE \"%s\".\"%s\" SET %s=%v%s WHERE \"%v\" = $%v;", tbl.Schema, tbl.Table, tbl.GeometryColumn, geomSQL, setClause, tbl.IDColumn, len(tbl.Columns)+2)
+
 	var err error
+	argValues := make([]interface{}, len(columnValues)+2)
 	argValues[0], err = json.Marshal(feature.Geometry)
 	if err != nil {
 		return "", nil, err
 	}
-	for index, column := range tbl.Columns {
-		if column == tbl.IDColumn {
-			argValues[index+1] = id // Set to url specified id.
-			continue
-		}
-		if val, ok := feature.Properties[column]; ok {
-			if tbl.DbTypes[column] == "int4" {
-				argValues[index+1] = int(val.(float64))
-			} else {
-				argValues[index+1] = val
-			}
-		}
-	}
-	argValues[len(tbl.Columns)+1] = id
+
+	copy(argValues[1:], columnValues)
+	argValues[len(columnValues)+1] = id
 
 	return sql, argValues, nil
 }
